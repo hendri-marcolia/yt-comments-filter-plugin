@@ -4,7 +4,6 @@ const commentSelector = "yt-attributed-string[id='content-text']";
 let seenComments = new Set();
 let blockedComments = new Set();
 let debounceTimer = null;
-let lastCommentNode = null;
 
 // Inject CSS to flag spam comments
 const style = document.createElement('style');
@@ -102,7 +101,6 @@ function normalizeFancyText(str) {
     .toLowerCase();                                   // Optional: uppercase everything;
 }
 
-
 // Extract clean text from a comment node (with emoji handling)
 function extractTextFromNode(node) {
   let result = '';
@@ -124,124 +122,168 @@ function extractTextFromNode(node) {
 }
 
 let spamWords = ["MANDALIKA77", "WETON88", "exototo"];
+let whitelist = ["N/A", "BIBOINI", "GenericGambling"].map(word => word.toLowerCase());
 // load the spamWords from local storage
 chrome.storage.local.get("spamWords", function (result) {
   if (result.spamWords) {
     spamWords = result.spamWords;
+    spamWords = spamWords.filter(word => !whitelist.includes(word)).map(word => word.toLowerCase());
   } else {
     // If no spam words are found, initialize with default values
-    spamWords = ["MANDALIKA77", "WETON88", "exototo"];
+    spamWords = ["MANDALIKA77", "WETON88", "exototo"].map(word => word.toLowerCase());
+  }
+});
+// load the whitelist from local storage
+chrome.storage.local.get("whitelist", function (result) {
+  if (result.whitelist) {
+    whitelist = result.whitelist;
+    whitelist = whitelist.map(word => word.toLowerCase());
+  } else {
+    // If no whitelist is found, initialize with default values
+    whitelist = ["N/A", "BIBOINI", "GenericGambling"].map(word => word.toLowerCase());
   }
 });
 
-async function isSpam(comment) {
-  // Simulate spam detection by checking if the comment includes the word "rezeki"
-  // In a real-world scenario, you would use a more sophisticated method
-  // such as a machine learning model or an external API.
-  comment = normalizeFancyText(comment);
+// Flag state
+let removeSpam = false;
+let useAi = true;
+
+chrome.storage.local.get(["removeSpam", "useAi"], function (result) {
+  removeSpam = result.removeSpam !== false; // Default to true
+  useAi = result.useAi !== false; // Default to true
+});
+
+async function isSpam(rComment) {
+  comment = normalizeFancyText(rComment);
   comment = comment.toLowerCase();
-  exists = spamWords.some(word => comment.includes(word.toLowerCase()));
-  // if the filtering is not enough, let's hit the API
-  // curl --request POST \
-  // --url http://localhost:8080/analyze \
-  // --header 'content-type: application/json' \
-  // --data '{"comment": "Gassss terus ♥M♥A♥N♥D♥A♥L♥I♥K♥A♥7♥7♥"}'
-  // Response:
-  // {
-  //   "spam": true,
-  //   "keyword": "MANDALIKA77",
-  //   "confidence": 0.95
-  // }
-  if (!exists) {
-    const response = await fetch("http://localhost:8080/analyze", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ comment }),
-    });
-
-    if (response.ok) {
-      const data = await response.json();
-      exists = data.spam;
-      const new_keyword = data.keyword;
-      if (new_keyword && !spamWords.includes(new_keyword)) {
-        spamWords.push(new_keyword);
-        // Save the new keyword to local storage
-        chrome.storage.local.set({ spamWords: spamWords }, function () {
-          console.log("New keyword saved:", new_keyword);
-        });
-      }
-    } else {
-      console.error("Error fetching spam detection:", response.statusText);
-    }
-  }
-
-  return exists;
-}
-
-// Get all new comments that haven't been seen
-async function getNewComments() {
-  const commentNodes = document.querySelectorAll(commentSelector);
-  const newComments = [];
-  let startNode = lastCommentNode ? Array.from(commentNodes).indexOf(lastCommentNode) + 1 : 0;
-
-  for (let i = startNode; i < commentNodes.length; i++) {
-    const node = commentNodes[i];
-    const comment = extractTextFromNode(node);
-    if (comment && !seenComments.has(comment)) {
-      seenComments.add(comment);
-      isSpam(comment).then(isSpamResult => {
-        if (isSpamResult) {
-          console.log("⚠️ Blocked comment detected:", comment);
-          chrome.runtime.sendMessage({
-            action: "NewBlockedComments",
-            comment: comment,
-          });
-
-          node.classList.add("spam-comment", "hidden");
-
-          // Create a placeholder
-          const placeholderSpan = document.createElement('span');
-          placeholderSpan.classList.add('placeholder');
-          placeholderSpan.textContent = "This comment is blocked. Click to unhide.";
-
-          // Create a hide button
-          const hideButton = document.createElement('span');
-          hideButton.classList.add('hide-button');
-          hideButton.textContent = "Unhide";
-          hideButton.addEventListener('click', () => {
-            node.classList.toggle('hidden');
-            hideButton.textContent = node.classList.contains('hidden') ? "Unhide" : "Hide";
-          });
-
-          // create a wrapper node for the placeholder and hide button
-          const wrapperNode = document.createElement('div');
-          // Add a class to the wrapper node (clear text and warning)
-          wrapperNode.classList.add('comment-wrapper');
-          wrapperNode.appendChild(placeholderSpan);
-          wrapperNode.appendChild(hideButton);
-          node.parentNode.insertBefore(wrapperNode, node.parentNode.firstChild);
-
-          blockedComments.add(comment);
-        } else {
-          newComments.push(comment);
-        }
+  lowerWhitelist = whitelist.map(word => word.toLowerCase());
+  filterSpamWords = spamWords.filter(word => !lowerWhitelist.includes(word.toLowerCase()))
+  exists = filterSpamWords.find(word => comment.includes(word.toLocaleLowerCase()));
+  if (!exists && useAi) {
+    try {
+      const response = await fetch("http://localhost:8080/analyze", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ comment: rComment }),
       });
+
+      if (response.ok) {
+        const data = await response.json();
+        // Check if the data.keyword exists in whitelist
+        const whitelistExists = whitelist.some(word => data.keyword && data.keyword.toLowerCase() === word.toLowerCase());
+        if (!whitelistExists) {
+          exists = data.spam;
+          const new_keyword = data.keyword;
+          if (new_keyword && !spamWords.includes(new_keyword)) {
+            spamWords.push(new_keyword);
+            chrome.storage.local.set({ spamWords: spamWords }, function () {
+              console.log("New keyword saved:", new_keyword);
+            });
+          }
+        }{
+          return {
+            spam: false,
+            keyword: null,
+          }; // Default to not spam if whitelist exists
+        }
+      } else {
+        console.error("Error fetching spam detection:", response.statusText);
+      }
+    } catch (error) {
+      console.error("Error in fetch request:", error);
+      return {
+        spam: false,
+        keyword: null,
+      } // Default to not spam if there's an error
     }
-    lastCommentNode = node;
+  }
+
+  return {
+    spam: true,
+    keyword: exists,
   }
 }
 
-// Debounced mutation callback
-function handleMutations() {
-  if (debounceTimer) clearTimeout(debounceTimer);
-  debounceTimer = setTimeout(async () => { await getNewComments(); }, 300); // 300ms debounce
+async function getNewComments(mutationsList) {
+  for (const mutation of mutationsList) {
+    if (mutation.type === 'childList') {
+      for (const node of mutation.addedNodes) {
+        if (node.nodeType === Node.ELEMENT_NODE) {
+          const commentNodes = node.querySelectorAll(commentSelector);
+          commentNodes.forEach(async (commentNode) => {
+            const comment = extractTextFromNode(commentNode);
+            if (comment.length >= 4) {
+              const isSpamResult = await isSpam(comment);
+              if (isSpamResult.spam) {
+                console.log(`⚠️ Blocked comment detected: ${comment} with keyword ${isSpamResult.keyword}`);
+                chrome.runtime.sendMessage({
+                  action: "NewBlockedComments",
+                  comment: comment,
+                  keyword: isSpamResult.keyword,
+                });
+                // Mark the comment as spam if user doesn't check the "Remove Spam" checkbox
+                // Get the checkbox state from local storage
+                if (removeSpam) {
+                  // Remove parent tag ytd-comment-thread-renderer
+                  commentNode.closest("ytd-comment-thread-renderer").classList.add("hidden");
+                  // commentNode.parentNode.parentNode.removeChild(commentNode.parentNode);
+                  // commentNode.parentNode.insertBefore(textNode, commentNode);
+                } else {
+                  commentNode.classList.add("spam-comment", "hidden");
+
+                  const placeholderSpan = document.createElement('span');
+                  placeholderSpan.classList.add('placeholder');
+                  placeholderSpan.textContent = `This comment is blocked. Click to unhide.`;
+
+                  // Create a span for keyword to be added as whitelist if user wants
+                  const keywordSpan = document.createElement('span');
+                  keywordSpan.addEventListener('click', () => {
+                    const keyword = isSpamResult.keyword;
+                    if (keyword && !whitelist.includes(keyword)) {
+                      whitelist.push(keyword);
+                      chrome.storage.local.set({ whitelist: whitelist }, function () {
+                        console.log("New keyword saved:", keyword);
+                      });
+                    }
+                  });
+                  keywordSpan.textContent = `Keyword: ${isSpamResult.keyword}, Click to add to whitelist`;
+                  commentNode.appendChild(keywordSpan);
+
+                  const hideButton = document.createElement('span');
+                  hideButton.classList.add('hide-button');
+                  hideButton.textContent = "Unhide";
+                  hideButton.addEventListener('click', () => {
+                    commentNode.classList.toggle('hidden');
+                    hideButton.textContent = commentNode.classList.contains('hidden') ? "Unhide" : "Hide";
+                  });
+
+                  const wrapperNode = document.createElement('div');
+                  wrapperNode.classList.add('comment-wrapper');
+                  wrapperNode.appendChild(placeholderSpan);
+                  wrapperNode.appendChild(hideButton);
+                  commentNode.parentNode.insertBefore(wrapperNode, commentNode.parentNode.firstChild);
+                }
+
+                blockedComments.add(comment);
+              }
+            }
+          });
+        }
+      }
+    }
+  }
 }
 
-// Attach MutationObserver to monitor comment section
+function handleMutations(mutationsList) {
+  debounceTimer = setTimeout(async () => {
+    await getNewComments(mutationsList);
+  }, 300);
+}
+
 function observeComments() {
-  const commentContainer = document.querySelector("#comments");
+  const commentContainer = document.querySelector("#comments #contents");
 
   if (!commentContainer) {
     console.warn("⚠️ Comments container not found, retrying...");
@@ -252,29 +294,59 @@ function observeComments() {
   const observer = new MutationObserver(handleMutations);
   observer.observe(commentContainer, {
     childList: true,
-    subtree: true,
+    subtree: false,
   });
 
   console.log("✅ MutationObserver attached to comments.");
 }
 
-// Initial comment load
 window.addEventListener("load", async () => {
-  await getNewComments();
   observeComments();
 });
 
-// Respond to popup requests
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === "getBlockedComments") {
-    // Convert Set to Array for sending
     blockedCommentsArr = Array.from(blockedComments);
     sendResponse({ comments: blockedCommentsArr });
   }
   if (request.action === "getBlockKeywords") {
-    // Convert Set to Array for sending
     spamWordsArr = Array.from(spamWords);
     sendResponse({ keywords: spamWordsArr });
+  }
+  if (request.action === "getWhitelist") {
+    whitelistArr = Array.from(whitelist);
+    sendResponse({ whitelist: whitelistArr });
+  }
+  if (request.action === "addWhitelist") {
+    const newWord = request.word;
+    if (newWord && !whitelist.includes(newWord)) {
+      whitelist.push(newWord);
+      chrome.storage.local.set({ whitelist: whitelist }, function () {
+        console.log("New keyword saved:", newWord);
+      });
+    }
+  }
+  if (request.action === "updateLists") {
+    chrome.storage.local.get(["spamWords", "whitelist"], (result) => {
+      spamWords = result.spamWords || [];
+      whitelist = result.whitelist || [];
+      console.log("Updated spamWords:", spamWords);
+      console.log("Updated whitelist:", whitelist);
+      spamWords = spamWords.filter(word => !whitelist.includes(word)).map(word => word.toLowerCase());
+      whitelist = whitelist.map(word => word.toLowerCase());
+      // Refilter the comments
+      // const commentNodes = document.querySelectorAll(commentSelector);
+      // commentNodes.forEach(commentNode => {
+      //   const comment = extractTextFromNode(commentNode);
+      //   isSpam(comment).then(isSpamResult => {
+      //     if (isSpamResult) {
+      //       commentNode.classList.add("spam-comment", "hidden");
+      //     } else {
+      //       commentNode.classList.remove("spam-comment", "hidden");
+      //     }
+      //   });
+      // });
+    });
   }
   return true;
 });

@@ -4,25 +4,63 @@
   <title>YouTube Comments</title>
   <style>
     body {
-      width: 300px;
+      width: 350px;
       padding: 10px;
+      font-family: Arial, sans-serif;
+      background-color: #f4f4f4;
+    }
+    h1 {
+      color: #333;
+      text-align: center;
+    }
+    h2 {
+      color: #555;
+      margin-top: 20px;
+    }
+    #comments-container,
+    #keywords-container,
+    #whitelist-container {
+      border: 1px solid #ddd;
+      padding: 10px;
+      margin-bottom: 10px;
+      background-color: #fff;
+      overflow-y: auto;
+      max-height: 200px;
     }
     #comments-container {
-      overflow-y: scroll;
       max-height: 400px;
     }
   </style>
 </head>
 <body>
   <h1>YouTube Comments Filter</h1>
-  <h2>Blocked Comments: </h2>
+  <h2>Blocked Comments:</h2>
   <div id="comments-container">
     <!-- Comments will be displayed here -->
   </div>
-  <h2>Blocked Words: </h2>
+  <h2>Blocked Words:</h2>
   <div id="keywords-container">
     <!-- Blocked words will be displayed here -->
-     </div>
+  </div>
+  <h2>Whitelist:</h2>
+  <div id="whitelist-container">
+    <!-- Whitelist words will be displayed here -->
+  </div>
+
+  <h2>Options:</h2>
+  <div>
+    <label>
+      Remove Spam:
+      <input type="checkbox" id="removeSpam">
+    </label>
+  </div>
+  <div>
+    <label>
+      Use AI:
+      <input type="checkbox" id="useAi">
+    </label>
+  </div>
+
   <script type="module" src="popup.js"></script>
 </body>
 </html>
