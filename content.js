@@ -4,6 +4,9 @@ const commentSelector = "yt-attributed-string[id='content-text']";
 let seenComments = new Set();
 let blockedComments = new Set();
 let debounceTimer = null;
+let observerTimer = null;
+let debounceMutationList = [];
+let observer = null;
 
 // Inject CSS to flag spam comments
 const style = document.createElement('style');
@@ -182,7 +185,11 @@ async function isSpam(rComment) {
               console.log("New keyword saved:", new_keyword);
             });
           }
-        }{
+          return {
+            spam: exists,
+            keyword: new_keyword,
+          }
+        } else {
           return {
             spam: false,
             keyword: null,
@@ -201,8 +208,8 @@ async function isSpam(rComment) {
   }
 
   return {
-    spam: true,
-    keyword: exists,
+    spam: exists !== undefined ? true : false,
+    keyword: exists !== undefined ? exists : null,
   }
 }
 
@@ -239,7 +246,12 @@ async function getNewComments(mutationsList) {
 
                   // Create a span for keyword to be added as whitelist if user wants
                   const keywordSpan = document.createElement('span');
+                  keywordSpan.style.color = 'red';
+                  keywordSpan.style.cursor = 'pointer';
                   keywordSpan.addEventListener('click', () => {
+                    // add confirmation dialog
+                    const confirmAdd = confirm(`Do you want to add "${isSpamResult.keyword}" to the whitelist?`);
+                    if (!confirmAdd) return;
                     const keyword = isSpamResult.keyword;
                     if (keyword && !whitelist.includes(keyword)) {
                       whitelist.push(keyword);
@@ -254,6 +266,7 @@ async function getNewComments(mutationsList) {
                   const hideButton = document.createElement('span');
                   hideButton.classList.add('hide-button');
                   hideButton.textContent = "Unhide";
+                  hideButton.style.cursor = 'pointer';
                   hideButton.addEventListener('click', () => {
                     commentNode.classList.toggle('hidden');
                     hideButton.textContent = commentNode.classList.contains('hidden') ? "Unhide" : "Hide";
@@ -277,22 +290,52 @@ async function getNewComments(mutationsList) {
 }
 
 function handleMutations(mutationsList) {
+  if (debounceTimer) {
+    clearTimeout(debounceTimer);
+  }
+  // append the mutations to the debounce list
+  debounceMutationList.push(...mutationsList);
+  // Debounce the function call
   debounceTimer = setTimeout(async () => {
-    await getNewComments(mutationsList);
+    await getNewComments(debounceMutationList);
+    // Clear the debounce list
+    debounceMutationList = [];
   }, 300);
 }
 
+function loadObserver() {
+  if (observerTimer) {
+    clearTimeout(observerTimer);
+  }
+  observeComments();
+}
+
+document.addEventListener('yt-page-data-updated', function () {
+  console.log("⚠️ yt-page-data-updated event detected.");
+  loadObserver();
+});
+if (document.body) loadObserver();
+else document.addEventListener('DOMContentLoaded', loadObserver);
+
 function observeComments() {
+  // Video comments container
   const commentContainer = document.querySelector("#comments #contents");
 
-  if (!commentContainer) {
-    console.warn("⚠️ Comments container not found, retrying...");
-    setTimeout(observeComments, 1000);
+  // Short comments container
+  const shortCommentContainer = document.querySelector("#shorts-panel-container #content #contents #contents");
+
+  if (!commentContainer && !shortCommentContainer) {
+    // console.warn("⚠️ Comments container not found, retrying...");
+    observerTimer = setTimeout(observeComments, 1000);
     return;
   }
+  if (observer) {
+    observer.disconnect();
+    console.log("⚠️ MutationObserver disconnected.");
+  }
+  observer = new MutationObserver(handleMutations);
 
-  const observer = new MutationObserver(handleMutations);
-  observer.observe(commentContainer, {
+  observer.observe(commentContainer || shortCommentContainer, {
     childList: true,
     subtree: false,
   });
