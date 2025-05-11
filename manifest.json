@@ -1,0 +1,30 @@
+{
+  "manifest_version": 3,
+  "name": "YouTube Comments Reader",
+  "version": "1.0",
+  "description": "Reads YouTube comments on shorts and watch pages.",
+  "permissions": [
+    "scripting",
+    "tabs",
+    "activeTab",
+    "storage"
+  ],
+  "host_permissions": [
+    "*://*.youtube.com/shorts/*",
+    "*://*.youtube.com/watch*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "*://*.youtube.com/shorts/*",
+        "*://*.youtube.com/watch*"
+      ],
+      "js": [
+        "content.js"
+      ]
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html"
+  }
+}
