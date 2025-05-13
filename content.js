@@ -152,8 +152,9 @@ let removeSpam = false;
 let useAi = true;
 
 chrome.storage.local.get(["removeSpam", "useAi"], function (result) {
-  removeSpam = result.removeSpam !== false; // Default to true
-  useAi = result.useAi !== false; // Default to true
+  // removeSpam defaulting to false, useAi defaulting to true
+  removeSpam = result.removeSpam !== undefined ? result.removeSpam : false;
+  useAi = result.useAi !== undefined ? result.useAi : true;
 });
 
 async function isSpam(rComment) {
